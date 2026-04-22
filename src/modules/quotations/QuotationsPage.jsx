@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { db } from '../../api/electron';
-import { FileText, Plus, Search, CheckCircle, Printer, ArrowRight, Trash2, Minus, Landmark } from 'lucide-react';
+import { FileText, Plus, Search, CheckCircle, Printer, ArrowRight, Trash2, Minus, Landmark, Mail, Eye } from 'lucide-react';
 import { cleanProductName } from '../../lib/utils';
 import PaymentModal from '../../components/PaymentModal';
 
@@ -18,6 +18,11 @@ export default function QuotationsPage({ user }) {
     const [activeShift, setActiveShift] = useState(null);
     const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
     const [selectedQuoteForPayment, setSelectedQuoteForPayment] = useState(null);
+    
+    // VIEW MODAL STATE
+    const [isViewModalOpen, setIsViewModalOpen] = useState(false);
+    const [selectedQuoteItems, setSelectedQuoteItems] = useState([]);
+    const [viewingQuote, setViewingQuote] = useState(null);
 
     const loadQuotes = async () => {
         if (!window.electronAPI) return;
@@ -112,7 +117,7 @@ export default function QuotationsPage({ user }) {
         try {
             await db.convertQuoteToInvoice({ 
                 quoteId: quote.id, 
-                payment: payment, 
+                payment: payment, // Now includes .type (FINAL/FISCAL)
                 shiftId: activeShift.id 
             });
             alert("¡Facturada con éxito!");
@@ -122,6 +127,46 @@ export default function QuotationsPage({ user }) {
             alert("Error al facturar: " + e.message);
         }
     };
+
+    const handlePrintQuote = async (quote) => {
+        try {
+            await window.electronAPI.invoke('db:print-quote', quote.id);
+        } catch (e) {
+            alert("Error al imprimir: " + e.message);
+        }
+    };
+
+    const handleEmailQuote = async (quote) => {
+        const email = prompt("Ingrese el correo del cliente:", quote.clientEmail || "");
+        if (!email) return;
+        try {
+            const res = await window.electronAPI.invoke('db:email-quote', { quoteId: quote.id, email });
+            if (res.success) alert("Cotización enviada con éxito!");
+            else alert("Error: " + res.message);
+        } catch (e) {
+            alert("Error al enviar: " + e.message);
+        }
+    };
+
+    const handleViewQuote = async (quote) => {
+        try {
+            const items = await window.electronAPI.invoke('db:get-invoice-items', quote.id);
+            setSelectedQuoteItems(items || []);
+            setViewingQuote(quote);
+            setIsViewModalOpen(true);
+        } catch (e) {
+            alert("Error al cargar detalles: " + e.message);
+        }
+    };
+
+    const formatDate = (dateStr) => {
+        if (!dateStr || dateStr.includes('sql')) return 'Recién creada';
+        try {
+            const d = new Date(dateStr);
+            if (isNaN(d.getTime())) return dateStr;
+            return d.toLocaleDateString();
+        } catch(e) { return dateStr; }
+    }
 
     // --- RENDER ---
 
@@ -217,6 +262,48 @@ export default function QuotationsPage({ user }) {
                     </button>
                 </div>
 
+                {/* MODAL PARA VER DETALLES */}
+                {isViewModalOpen && viewingQuote && (
+                    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
+                        <div className="bg-white rounded-3xl w-full max-w-lg shadow-2xl overflow-hidden p-8">
+                            <div className="flex justify-between items-center mb-6">
+                                <h2 className="text-2xl font-black">Detalles Cotización #{viewingQuote.id}</h2>
+                                <button onClick={() => setIsViewModalOpen(false)} className="text-gray-400 hover:text-gray-600">
+                                    <Plus className="rotate-45" />
+                                </button>
+                            </div>
+                            
+                            <div className="mb-4">
+                                <p className="text-sm text-gray-500"><strong>Cliente:</strong> {viewingQuote.clientName}</p>
+                                <p className="text-sm text-gray-500"><strong>Fecha:</strong> {formatDate(viewingQuote.date)}</p>
+                            </div>
+
+                            <div className="space-y-3 max-h-96 overflow-y-auto mb-6 pr-2">
+                                {selectedQuoteItems.map((item, idx) => (
+                                    <div key={idx} className="flex justify-between items-center border-b pb-2">
+                                        <div>
+                                            <div className="font-bold text-sm">{item.productName || 'Producto'}</div>
+                                            <div className="text-xs text-gray-400">{item.quantity} x ${item.price.toLocaleString()}</div>
+                                        </div>
+                                        <div className="font-black">${(item.quantity * item.price).toLocaleString()}</div>
+                                    </div>
+                                ))}
+                            </div>
+
+                            <div className="text-right border-t pt-4">
+                                <div className="text-2xl font-black text-blue-600">Total: ${viewingQuote.total.toLocaleString()}</div>
+                            </div>
+
+                            <button 
+                                onClick={() => setIsViewModalOpen(false)}
+                                className="w-full mt-6 bg-gray-100 py-3 rounded-xl font-bold hover:bg-gray-200"
+                            >
+                                Cerrar
+                            </button>
+                        </div>
+                    </div>
+                )}
+
                 <PaymentModal 
                     isOpen={isPaymentModalOpen} 
                     total={selectedQuoteForPayment?.total || 0}
@@ -267,7 +354,7 @@ export default function QuotationsPage({ user }) {
                                 <tr key={q.id} className="border-b last:border-0 hover:bg-gray-50">
                                     <td className="py-4 pl-2 font-mono">#{q.id}</td>
                                     <td className="py-4">{q.clientName}</td>
-                                    <td className="py-4 text-gray-500">{new Date(q.date).toLocaleDateString()}</td>
+                                    <td className="py-4 text-gray-500">{formatDate(q.date)}</td>
                                     <td className="py-4 font-bold text-gray-800">${q.total.toLocaleString()}</td>
                                     <td className="py-4">
                                         <span className={`px-3 py-1 rounded-full text-xs font-bold ${
@@ -277,8 +364,26 @@ export default function QuotationsPage({ user }) {
                                         </span>
                                     </td>
                                     <td className="py-4 text-right space-x-2">
-                                        <button className="text-gray-500 hover:text-gray-900" title="Imprimir PDF">
+                                        <button 
+                                            onClick={() => handleViewQuote(q)}
+                                            className="text-gray-500 hover:text-blue-600 transition-colors" 
+                                            title="Ver Detalles"
+                                        >
+                                            <Eye size={18} />
+                                        </button>
+                                        <button 
+                                            onClick={() => handlePrintQuote(q)}
+                                            className="text-gray-500 hover:text-blue-600 transition-colors" 
+                                            title="Imprimir / PDF"
+                                        >
                                             <Printer size={18} />
+                                        </button>
+                                        <button 
+                                            onClick={() => handleEmailQuote(q)}
+                                            className="text-gray-500 hover:text-blue-600 transition-colors" 
+                                            title="Enviar por Correo"
+                                        >
+                                            <Mail size={18} />
                                         </button>
                                         {q.status === 'QUOTE' && (
                                             <button 

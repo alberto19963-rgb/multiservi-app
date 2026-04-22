@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { DollarSign, CreditCard, Landmark, FileCheck, X, Check, Calculator } from 'lucide-react';
 
-export default function PaymentModal({ total, isOpen, onClose, onConfirm }) {
+export default function PaymentModal({ total, isOpen, onClose, onConfirm, showTypeSelector = true }) {
     const [method, setMethod] = useState('CASH'); // CASH, CARD, TRANSFER, CHECK
+    const [invoiceType, setInvoiceType] = useState('FINAL'); // FINAL (B02), FISCAL (B01)
     const [received, setReceived] = useState('');
     const [change, setChange] = useState(0);
 
@@ -65,6 +66,24 @@ export default function PaymentModal({ total, isOpen, onClose, onConfirm }) {
                     {/* Right: Payment Details */}
                     <div className="flex-1 p-8 flex flex-col justify-between">
                         <div>
+                            {/* Invoice Type Selection */}
+                            {showTypeSelector && (
+                                <div className="mb-6 bg-gray-50 p-2 rounded-2xl flex gap-2">
+                                    <button 
+                                        onClick={() => setInvoiceType('FINAL')}
+                                        className={`flex-1 py-2 rounded-xl text-sm font-bold transition-all ${invoiceType === 'FINAL' ? 'bg-white shadow-sm text-blue-600' : 'text-gray-400'}`}
+                                    >
+                                        Consumo (B02)
+                                    </button>
+                                    <button 
+                                        onClick={() => setInvoiceType('FISCAL')}
+                                        className={`flex-1 py-2 rounded-xl text-sm font-bold transition-all ${invoiceType === 'FISCAL' ? 'bg-white shadow-sm text-blue-600' : 'text-gray-400'}`}
+                                    >
+                                        Crédito Fiscal (B01)
+                                    </button>
+                                </div>
+                            )}
+
                             <div className="mb-6">
                                 <label className="text-gray-400 font-bold text-xs uppercase tracking-wider mb-2 block">Total a Cobrar</label>
                                 <div className="text-5xl font-black text-gray-900">
@@ -85,7 +104,7 @@ export default function PaymentModal({ total, isOpen, onClose, onConfirm }) {
                                                 placeholder="0.00"
                                                 value={received}
                                                 onChange={e => setReceived(e.target.value)}
-                                                onKeyDown={e => e.key === 'Enter' && onConfirm({ method, received: parseFloat(received), change })}
+                                                onKeyDown={e => e.key === 'Enter' && onConfirm({ method, received: parseFloat(received), change, type: invoiceType })}
                                             />
                                         </div>
                                     </div>
@@ -114,7 +133,7 @@ export default function PaymentModal({ total, isOpen, onClose, onConfirm }) {
 
                         <button
                             disabled={method === 'CASH' && (parseFloat(received) < total || !received)}
-                            onClick={() => onConfirm({ method, received: parseFloat(received), change })}
+                            onClick={() => onConfirm({ method, received: parseFloat(received), change, type: invoiceType })}
                             className={`w-full py-5 rounded-2xl font-black text-xl flex items-center justify-center gap-3 transition-all shadow-xl ${
                                 method === 'CASH' && (parseFloat(received) < total || !received)
                                 ? 'bg-gray-200 text-gray-400 cursor-not-allowed shadow-none'

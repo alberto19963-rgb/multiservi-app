@@ -44,7 +44,7 @@ const ncfSequences = sqliteTable("ncf_sequences", {
 
 const invoices = sqliteTable("invoices", {
   id: integer("id").primaryKey(),
-  date: text("date").notNull().default("sql`(CURRENT_TIMESTAMP)`"),
+  date: text("date").notNull().default(sql`(CURRENT_TIMESTAMP)`),
   clientId: integer("client_id"),
   clientName: text("client_name"), // De-normalized for simplicity
   clientRnc: text("client_rnc"),

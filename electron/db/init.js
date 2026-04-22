@@ -77,6 +77,7 @@ function initDB() {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       invoice_id INTEGER REFERENCES invoices(id),
       product_id INTEGER REFERENCES products(id),
+      product_name TEXT,
       quantity REAL NOT NULL,
       price REAL NOT NULL,
       total REAL NOT NULL
@@ -271,6 +272,7 @@ function initDB() {
     "ADD COLUMN node_id TEXT",
     "ADD COLUMN updated_at TEXT",
     "ADD COLUMN deleted INTEGER DEFAULT 0",
+    "ADD COLUMN product_name TEXT",
   ];
 
   try {

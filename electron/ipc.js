@@ -204,12 +204,12 @@ function setupIPC() {
       const ncfType = isQuote ? "QUOTE" : ncfTypeMap[type] || "B02";
 
       try {
-        const result = db.transaction(async () => {
+        const result = db.transaction(() => {
           let ncf = null;
 
           if (!isQuote) {
-            ncf = await getNextNCF(ncfType);
-            await incrementNCF(ncfType);
+            ncf = getNextNCF(ncfType);
+            incrementNCF(ncfType);
           }
 
           const subtotal = items.reduce(
@@ -300,7 +300,7 @@ function setupIPC() {
           return newInvoice;
         });
 
-        const finalInvoice = await result();
+        const finalInvoice = result;
         if (!isQuote) {
             pushInvoiceToCloud(finalInvoice);
         }
@@ -323,7 +323,7 @@ function setupIPC() {
 
   ipcMain.handle("db:convert-quote-to-invoice", async (event, { quoteId, payment, shiftId }) => {
     try {
-      const result = db.transaction(async () => {
+      const result = db.transaction(() => {
         // 1. Get Quote
         const quote = db
           .select()
@@ -334,15 +334,17 @@ function setupIPC() {
         if (quote.status !== "QUOTE")
           throw new Error("Esta cotización ya fue procesada");
 
-        // 2. Determine NCF Type
-        let ncfType = "B02"; 
-        if (quote.clientRnc) {
-          ncfType = "B01"; 
-        }
+        // 2. Determine NCF Type from user selection
+        const ncfTypeMap = {
+          FINAL: "B02",
+          FISCAL: "B01",
+          GOV: "B15",
+        };
+        const ncfType = ncfTypeMap[payment.type] || "B02";
 
         // 3. Generate NCF
-        const ncf = await getNextNCF(ncfType);
-        await incrementNCF(ncfType);
+        const ncf = getNextNCF(ncfType);
+        incrementNCF(ncfType);
 
         // 4. Update Invoice Record
         db.update(invoices)
@@ -404,7 +406,7 @@ function setupIPC() {
 
         return { success: true, ncf };
       });
-      return await result();
+      return result;
     } catch (e) {
       console.error("Quote Conversion Error:", e);
       throw e;
@@ -1319,6 +1321,153 @@ function setupIPC() {
       return [];
     }
   });
+
+  ipcMain.handle("db:get-invoice-items", async (event, invoiceId) => {
+    try {
+      return db
+        .select()
+        .from(invoiceItems)
+        .where(eq(invoiceItems.invoiceId, invoiceId))
+        .all();
+    } catch (e) {
+      console.error(e);
+      return [];
+    }
+  });
+
+  // --- QUOTATION ACTIONS (PRINT/EMAIL) ---
+  ipcMain.handle("db:print-quote", async (event, quoteId) => {
+    try {
+      const { quote, items, company } = await getQuotePrintData(quoteId);
+      const html = generateDocumentHTML("COTIZACIÓN", quote, items, company);
+      
+      const { BrowserWindow } = require("electron");
+      let win = new BrowserWindow({ show: false });
+      win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
+      win.webContents.on("did-finish-load", () => {
+        win.webContents.print({ silent: false, printBackground: true });
+        // win.close(); 
+      });
+      return { success: true };
+    } catch (e) {
+      console.error(e);
+      throw e;
+    }
+  });
+
+  ipcMain.handle("db:email-quote", async (event, { quoteId, email }) => {
+    try {
+      const { quote, items, company } = await getQuotePrintData(quoteId);
+      const html = generateDocumentHTML("COTIZACIÓN", quote, items, company);
+      
+      const isMailLinkActive = db.select().from(config).where(eq(config.key, "mail_link_active")).get()?.value === "true";
+      const mailLinkEmail = db.select().from(config).where(eq(config.key, "mail_link_email")).get()?.value;
+
+      if (isMailLinkActive && mailLinkEmail) {
+        const apiKey = db.select().from(config).where(eq(config.key, "mail_engine_api_key")).get()?.value;
+        const response = await fetch("http://mail-api.rosariogroupllc.com/api/send", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            accountId: mailLinkEmail,
+            apiKey: apiKey,
+            to: email,
+            subject: `Cotización #${quote.id} - ${company.name}`,
+            text: `Hola, adjuntamos la cotización solicitada. Total: $${quote.total}`,
+            html: html
+          })
+        });
+        const resData = await response.json();
+        return { success: response.ok, message: resData.message || resData.error };
+      } else {
+        throw new Error("El sistema de correo no está configurado.");
+      }
+    } catch (e) {
+      console.error(e);
+      return { success: false, message: e.message };
+    }
+  });
+}
+
+async function getQuotePrintData(quoteId) {
+  const quote = db.select().from(invoices).where(eq(invoices.id, quoteId)).get();
+  const items = db.select().from(invoiceItems).where(eq(invoiceItems.invoiceId, quoteId)).all();
+  
+  const companyData = db.select().from(config).all();
+  const company = {
+    name: companyData.find(c => c.key === 'company_name')?.value || 'Multiservi Chavon',
+    rnc: companyData.find(c => c.key === 'company_rnc')?.value || '',
+    address: companyData.find(c => c.key === 'company_address')?.value || '',
+    phone: companyData.find(c => c.key === 'company_phone')?.value || '',
+  };
+
+  return { quote, items, company };
+}
+
+function generateDocumentHTML(title, doc, items, company) {
+  return `
+    <html>
+      <head>
+        <style>
+          body { font-family: sans-serif; padding: 40px; color: #333; }
+          .header { display: flex; justify-content: space-between; border-bottom: 2px solid #333; padding-bottom: 20px; margin-bottom: 30px; }
+          .company-info h1 { margin: 0; color: #1e3a8a; }
+          .doc-info { text-align: right; }
+          .doc-info h2 { margin: 0; color: #666; }
+          table { width: 100%; border-collapse: collapse; margin-top: 30px; }
+          th { background: #f3f4f6; text-align: left; padding: 12px; border-bottom: 1px solid #ddd; }
+          td { padding: 12px; border-bottom: 1px solid #eee; }
+          .totals { margin-top: 30px; text-align: right; }
+          .totals div { font-size: 18px; margin-bottom: 5px; }
+          .footer { margin-top: 50px; font-size: 12px; color: #999; text-align: center; }
+        </style>
+      </head>
+      <body>
+        <div class="header">
+          <div class="company-info">
+            <h1>${company.name}</h1>
+            <p>RNC: ${company.rnc}<br>${company.address}<br>Tel: ${company.phone}</p>
+          </div>
+          <div class="doc-info">
+            <h2>${title}</h2>
+            <p>#${doc.id}<br>Fecha: ${new Date(doc.date).toLocaleDateString()}</p>
+            <p><strong>Cliente:</strong> ${doc.clientName}</p>
+          </div>
+        </div>
+
+        <table>
+          <thead>
+            <tr>
+              <th>Producto</th>
+              <th>Cant.</th>
+              <th>Precio</th>
+              <th>Total</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${items.map(item => `
+              <tr>
+                <td>${item.productName}</td>
+                <td>${item.quantity}</td>
+                <td>$${item.price.toLocaleString()}</td>
+                <td>$${(item.quantity * item.price).toLocaleString()}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+
+        <div class="totals">
+          <div>Subtotal: $${doc.subtotal.toLocaleString()}</div>
+          <div>ITBIS (18%): $${doc.itbis.toLocaleString()}</div>
+          <div style="font-weight: bold; font-size: 24px; color: #1e3a8a;">TOTAL: $${doc.total.toLocaleString()}</div>
+        </div>
+
+        <div class="footer">
+          Esta es una cotización informativa válida por 15 días.
+        </div>
+      </body>
+    </html>
+  `;
 }
 
 module.exports = { setupIPC };
