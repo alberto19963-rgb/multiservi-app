@@ -1,0 +1,28 @@
+appId: com.multiservi.pos
+productName: Gestion Empresarial
+directories:
+  output: dist-electron
+files:
+  - dist/**/*
+  - electron/**/*
+  - node_modules/**/*
+  - package.json
+publish:
+  provider: github
+  owner: alberto19963-rgb
+  repo: multiservi-app
+mac:
+  identity: null
+  icon: resources/icon.icns
+  target:
+    - target: dmg
+      arch:
+        - x64
+        - arm64
+win:
+  target: nsis
+  icon: resources/icon.png
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  deleteAppDataOnUninstall: true

@@ -1,0 +1,29 @@
+@import "tailwindcss";
+
+:root {
+  font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
+}
+
+body {
+  @apply bg-gray-50 text-gray-900;
+  margin: 0;
+  padding: 0;
+  overflow: hidden; /* Prevent scrolling in Kiosk mode if not inside a container */
+}
+
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  .printable-content, .printable-content * {
+    visibility: visible;
+  }
+  .printable-content {
+    position: aboslute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: auto;
+    overflow: visible !important;
+  }
+}
