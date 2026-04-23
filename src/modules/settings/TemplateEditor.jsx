@@ -56,25 +56,6 @@ export default function TemplateEditor() {
 
     const [activeTab, setActiveTab] = useState('PDF'); // PDF or TICKET
 
-    const [isSyncing, setIsSyncing] = useState(false);
-
-    const handleSyncAll = async () => {
-        if (!confirm("¿Deseas subir todos tus productos, clientes y secuencias NCF a la nube ahora mismo? Esto sincronizará todas tus PCs.")) return;
-        setIsSyncing(true);
-        try {
-            const res = await db.pushAllToCloud();
-            if (res.success) {
-                alert(`¡Éxito! Se han sincronizado ${res.count} registros con la nube.`);
-            } else {
-                alert("Error de sincronización: " + res.msg);
-            }
-        } catch (e) {
-            alert("Error crítico: " + e.message);
-        } finally {
-            setIsSyncing(false);
-        }
-    };
-
     return (
         <div className="p-8 max-w-7xl mx-auto">
             <div className="flex justify-between items-center mb-8">
@@ -82,24 +63,14 @@ export default function TemplateEditor() {
                     <h1 className="text-3xl font-black text-gray-900 italic tracking-tighter">Branding & Documentos</h1>
                     <p className="text-gray-500 font-medium">Personaliza la identidad visual de tus facturas y tickets</p>
                 </div>
-                <div className="flex gap-4">
-                    <button 
-                        onClick={handleSyncAll}
-                        disabled={isSyncing || isSaving}
-                        className="bg-gray-100 text-gray-700 px-6 py-4 rounded-2xl font-black flex items-center hover:bg-gray-200 transition-all active:scale-95 disabled:opacity-50"
-                    >
-                        {isSyncing ? <RefreshCcw className="animate-spin mr-2" /> : <RefreshCcw className="mr-2" />}
-                        Sincronizar todo a la Nube
-                    </button>
-                    <button 
-                        onClick={handleSave}
-                        disabled={isSaving || isSyncing}
-                        className="bg-indigo-600 text-white px-8 py-4 rounded-2xl font-black flex items-center hover:bg-indigo-700 transition-all shadow-xl shadow-indigo-200 active:scale-95 disabled:opacity-50"
-                    >
-                        {isSaving ? <RefreshCcw className="animate-spin mr-2" /> : <Save className="mr-2" />}
-                        Guardar Identidad
-                    </button>
-                </div>
+                <button 
+                    onClick={handleSave}
+                    disabled={isSaving}
+                    className="bg-indigo-600 text-white px-8 py-4 rounded-2xl font-black flex items-center hover:bg-indigo-700 transition-all shadow-xl shadow-indigo-200 active:scale-95 disabled:opacity-50"
+                >
+                    {isSaving ? <RefreshCcw className="animate-spin mr-2" /> : <Save className="mr-2" />}
+                    Guardar Identidad
+                </button>
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-10">
