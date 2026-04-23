@@ -9,7 +9,7 @@ export default function FiscalPage() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   
   // Client Form
-  const [clientForm, setClientForm] = useState({ name: '', rnc: '', type: 'FINAL', address: '', phone: '' });
+  const [clientForm, setClientForm] = useState({ name: '', rnc: '', type: 'FINAL', address: '', phone: '', email: '' });
 
   const loadData = async () => {
     if (!window.electronAPI) return; // Mock data handled elsewhere if needed
@@ -33,7 +33,7 @@ export default function FiscalPage() {
     if (!window.electronAPI) return;
     try {
         await db.addClient(clientForm);
-        setClientForm({ name: '', rnc: '', type: 'FINAL', address: '', phone: '' }); // Reset
+        setClientForm({ name: '', rnc: '', type: 'FINAL', address: '', phone: '', email: '' }); // Reset
         setIsModalOpen(false);
         loadData();
     } catch (e) {
@@ -163,8 +163,14 @@ export default function FiscalPage() {
                     </div>
                      <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">Teléfono</label>
-                        <input className="w-full bg-gray-50 rounded border border-gray-200 p-2" 
+                        <input className="w-full bg-gray-50 rounded border border-gray-200 p-2 mb-3" 
                             value={clientForm.phone} onChange={e => setClientForm({...clientForm, phone: e.target.value})} />
+                    </div>
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Correo Electrónico</label>
+                        <input type="email" className="w-full bg-gray-50 rounded border border-gray-200 p-2" 
+                            placeholder="ejemplo@correo.com"
+                            value={clientForm.email} onChange={e => setClientForm({...clientForm, email: e.target.value})} />
                     </div>
                     
                     <button type="submit" className="w-full py-3 bg-blue-600 text-white font-bold rounded-xl mt-4 hover:bg-blue-700">Guardar Cliente</button>

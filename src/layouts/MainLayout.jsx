@@ -12,7 +12,8 @@ import {
   Users,
   DollarSign,
   Clock,
-  Briefcase
+  Briefcase,
+  Palette
 } from 'lucide-react';
 import QuickClockModal from '../components/QuickClockModal';
 
@@ -95,7 +96,7 @@ export default function MainLayout({ user, hasProAccess, onLogout }) {
                             {hasProAccess && <SidebarItem to="/fiscal" icon={FileText} label="Fiscal / NCF" active={location.pathname === '/fiscal'} />}
                             <SidebarItem to="/finance" icon={DollarSign} label="Finanzas" active={location.pathname === '/finance'} />
                             <SidebarItem to="/users" icon={Users} label="Usuarios" active={location.pathname === '/users'} />
-
+                            <SidebarItem to="/template-editor" icon={Palette} label="Diseño de Factura" active={location.pathname === '/template-editor'} />
                         </>
                     )}
 

@@ -29,6 +29,7 @@ const clients = sqliteTable("clients", {
   type: text("type").default("FINAL"),
   address: text("address"),
   phone: text("phone"),
+  email: text("email"),
   notes: text("notes"),
   ...syncColumns,
 });
@@ -48,6 +49,8 @@ const invoices = sqliteTable("invoices", {
   clientId: integer("client_id"),
   clientName: text("client_name"), // De-normalized for simplicity
   clientRnc: text("client_rnc"),
+  clientEmail: text("client_email"),
+  clientPhone: text("client_phone"),
   ncfType: text("ncf_type"),
   ncf: text("ncf").unique(),
   subtotal: real("subtotal").default(0),

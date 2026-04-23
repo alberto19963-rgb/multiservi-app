@@ -104,4 +104,17 @@ export const db = {
   // Mail Engine (External)
   requestMailLink:   (data) => window.electronAPI.invoke("mail:request-link", data),
   getMailLinkStatus: (email) => window.electronAPI.invoke("mail:get-link-status", email),
+  
+  // Quotations
+  printQuote: (quoteId) => window.electronAPI.invoke("db:print-quote", quoteId),
+  emailQuote: (quoteId, targetEmail) => window.electronAPI.invoke("db:email-quote", quoteId, targetEmail),
+  downloadQuotePDF: (quoteId) => window.electronAPI.invoke("db:download-quote-pdf", quoteId),
+  deleteQuote: (id) => window.electronAPI.invoke("db:delete-invoice", id),
+  getInvoiceItems: (invoiceId) => window.electronAPI.invoke("db:get-invoice-items", invoiceId),
+  
+  // Config & Template
+  getConfig: () => window.electronAPI.invoke("db:get-config"),
+  saveConfig: (items) => window.electronAPI.invoke("db:save-config", items),
+  uploadLogo: (base64) => window.electronAPI.invoke("db:upload-logo", base64),
+  pushAllToCloud: () => window.electronAPI.invoke("cloud:push-all"),
 };

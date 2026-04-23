@@ -11,6 +11,7 @@ import UsersPage from './modules/users/UsersPage';
 import SettingsPage from './modules/settings/SettingsPage';
 import ProductionPage from './modules/production/ProductionPage';
 import QuotationsPage from './modules/quotations/QuotationsPage';
+import TemplateEditor from './modules/settings/TemplateEditor';
 
 import TimeClockPage from './modules/clock/TimeClockPage';
 import DashboardPage from './modules/dashboard/DashboardPage';
@@ -96,6 +97,7 @@ function App() {
           <Route path="finance" element={user.role === 'ADMIN' ? <FinancePage /> : <Navigate to="/" />} />
           <Route path="users" element={user.role === 'ADMIN' ? <UsersPage /> : <Navigate to="/" />} />
           <Route path="settings" element={user.role === 'ADMIN' ? <SettingsPage hasProAccess={hasProAccess} /> : <Navigate to="/" />} />
+          <Route path="template-editor" element={user.role === 'ADMIN' ? <TemplateEditor /> : <Navigate to="/" />} />
 
           <Route path="timeclock" element={hasProAccess ? <TimeClockPage /> : <Navigate to="/" />} /> 
         </Route>

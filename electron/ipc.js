@@ -21,7 +21,15 @@ const {
 const { eq, sql, desc, like, or } = require("drizzle-orm");
 const { v4: uuidv4 } = require("uuid");
 const { getNextNCF, incrementNCF } = require("./ncf");
-const { pushProductToCloud, pushUpdateToCloud, pushAllProductsToCloud, pushInvoiceToCloud, pullProductsFromCloud, pullInventoryFromCloud, pushFamilyToCloud, pushVariantToCloud, pushSkuToCloud, pushDeleteToCloud } = require("./cloud-sync");
+const { 
+  startCloudSyncListener, 
+  fullSyncFromCloud, 
+  pushAllDataToCloud,
+  pushProductToCloud, 
+  pushInvoiceToCloud,
+  pushConfigToCloud,
+  pushNCFSequenceToCloud
+} = require("./cloud-sync");
 const { syncDGII } = require("./dgii-sync");
 
 const db = getDB();
@@ -36,6 +44,11 @@ const withMeta = (data) => ({
 });
 
 function setupIPC() {
+  // --- CLOUD SYNC ---
+  ipcMain.handle("cloud:push-all", async () => {
+    return await pushAllDataToCloud();
+  });
+
   // --- PRODUCTS ---
   ipcMain.handle("db:get-products", async (event, query = "") => {
     try {
@@ -157,9 +170,54 @@ function setupIPC() {
     return db.insert(clients).values(withMeta(clientData)).returning().get();
   });
 
-  // --- NCF CONFIGURATION ---
-  ipcMain.handle("db:get-ncf-sequences", async () => {
-    return db.select().from(ncfSequences).all();
+  ipcMain.handle("db:delete-invoice", async (event, id) => {
+    console.log(`[IPC] Eliminando cotización ${id}...`);
+    try {
+      db.delete(invoiceItems).where(eq(invoiceItems.invoiceId, id)).run();
+      db.delete(invoices).where(eq(invoices.id, id)).run();
+      console.log(`[IPC] Cotización ${id} eliminada con éxito.`);
+      return { success: true };
+    } catch (e) {
+      console.error("[IPC] Error al eliminar cotización:", e);
+      return { success: false, message: e.message };
+    }
+  });
+
+  // --- CONFIGURATION ---
+  ipcMain.handle("db:get-config", async () => {
+    return db.select().from(config).all();
+  });
+
+  ipcMain.handle("db:save-config", async (event, configItems) => {
+    try {
+      for (const item of configItems) {
+        const existing = db.select().from(config).where(eq(config.key, item.key)).get();
+        if (existing) {
+          db.update(config).set({ value: item.value }).where(eq(config.key, item.key)).run();
+        } else {
+          db.insert(config).values(item).run();
+        }
+      }
+      return { success: true };
+    } catch (e) {
+      console.error(e);
+      return { success: false, message: e.message };
+    }
+  });
+
+  ipcMain.handle("db:upload-logo", async (event, base64Data) => {
+    try {
+      // Guardar el logo como una configuración especial
+      const existing = db.select().from(config).where(eq(config.key, 'company_logo')).get();
+      if (existing) {
+        db.update(config).set({ value: base64Data }).where(eq(config.key, 'company_logo')).run();
+      } else {
+        db.insert(config).values({ key: 'company_logo', value: base64Data }).run();
+      }
+      return { success: true };
+    } catch (e) {
+      return { success: false, message: e.message };
+    }
   });
 
   ipcMain.handle(
@@ -226,13 +284,16 @@ function setupIPC() {
                 clientId: client ? client.id : null,
                 clientName: client ? client.name : "CONSUMIDOR FINAL",
                 clientRnc: client ? client.rnc : null,
+                clientEmail: client ? client.email : null,
+                clientPhone: client ? client.phone : null,
                 ncf: ncf,
                 ncfType: ncfType,
                 total: total,
                 subtotal: subtotal,
                 itbis: itbis,
                 itemsCount: items.length,
-                status: isQuote ? "QUOTE" : "PAID",
+                status: isQuote ? "QUOTE" : (payment ? "PAID" : "PENDING"),
+                tax: itbis, // Aseguramos que se guarde como 'tax' para coincidir con el schema
               })
             )
             .returning()
@@ -259,9 +320,9 @@ function setupIPC() {
                             : 'totalCheck';
                
                db.update(shifts)
-                 .set({ [column]: sql`${shifts[column]} + ${total}` })
-                 .where(eq(shifts.id, shiftId))
-                 .run();
+                  .set({ [column]: sql`${shifts[column]} + ${total}` })
+                  .where(eq(shifts.id, shiftId))
+                  .run();
              }
           }
 
@@ -524,7 +585,10 @@ function setupIPC() {
       const todayInvoices = db
         .select()
         .from(invoices)
-        .where(sql`date(${invoices.createdAt}) = date('now', 'localtime')`)
+        .where(and(
+          sql`date(${invoices.createdAt}) = date('now', 'localtime')`,
+          eq(invoices.status, 'INVOICE')
+        ))
         .all();
 
       const totalSales = todayInvoices.reduce((sum, inv) => sum + (inv.total || 0), 0);
@@ -1324,11 +1388,13 @@ function setupIPC() {
 
   ipcMain.handle("db:get-invoice-items", async (event, invoiceId) => {
     try {
-      return db
+      const rows = db
         .select()
         .from(invoiceItems)
         .where(eq(invoiceItems.invoiceId, invoiceId))
         .all();
+      console.log(`[IPC] items para invoice ${invoiceId}:`, rows.length);
+      return rows;
     } catch (e) {
       console.error(e);
       return [];
@@ -1336,22 +1402,80 @@ function setupIPC() {
   });
 
   // --- QUOTATION ACTIONS (PRINT/EMAIL) ---
+  let printWindow = null; // Para evitar que el recolector de basura la cierre antes de tiempo
+
   ipcMain.handle("db:print-quote", async (event, quoteId) => {
+    console.log(`[IPC] Preparando impresión para cotización ${quoteId}...`);
     try {
       const { quote, items, company } = await getQuotePrintData(quoteId);
       const html = generateDocumentHTML("COTIZACIÓN", quote, items, company);
       
       const { BrowserWindow } = require("electron");
-      let win = new BrowserWindow({ show: false });
-      win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
-      win.webContents.on("did-finish-load", () => {
-        win.webContents.print({ silent: false, printBackground: true });
-        // win.close(); 
+      let tempWin = new BrowserWindow({ 
+        width: 400, height: 300,
+        show: true, // Lo hacemos visible un momento
+        title: "Imprimiendo...",
+        webPreferences: { nodeIntegration: false } 
       });
+
+      // Mover la ventana un poco fuera de la vista principal si es posible
+      tempWin.center();
+
+      await tempWin.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
+      
+      console.log(`[IPC] Documento cargado. Ejecutando window.print()...`);
+      
+      // Usamos un pequeño script para que la ventana se imprima a sí misma y se cierre al terminar
+      await tempWin.webContents.executeJavaScript(`
+        window.print();
+        // No cerramos inmediatamente, dejamos que el usuario termine
+        window.onafterprint = () => { window.close(); };
+        // Por si acaso onafterprint no dispara en algunas versiones, cerramos tras un tiempo largo
+        setTimeout(() => { window.close(); }, 60000);
+      `);
+
       return { success: true };
     } catch (e) {
-      console.error(e);
-      throw e;
+      console.error("[IPC] Error crítico en impresión:", e);
+      return { success: false, message: e.message };
+    }
+  });
+
+  ipcMain.handle("db:download-quote-pdf", async (event, quoteId) => {
+    console.log(`[IPC] Iniciando descarga PDF para cotización ${quoteId}...`);
+    try {
+      const { quote, items, company } = await getQuotePrintData(quoteId);
+      console.log(`[IPC] Datos obtenidos. Generando HTML...`);
+      const html = generateDocumentHTML("COTIZACIÓN", quote, items, company);
+      
+      const { BrowserWindow, dialog } = require("electron");
+      let win = new BrowserWindow({ show: false });
+      await win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
+      
+      console.log(`[IPC] HTML cargado. Generando PDF binario...`);
+      const data = await win.webContents.printToPDF({
+        printBackground: true,
+        marginsType: 1
+      });
+
+      console.log(`[IPC] PDF generado. Abriendo diálogo de guardado...`);
+      const { filePath } = await dialog.showSaveDialog({
+        title: 'Guardar Cotización PDF',
+        defaultPath: `Cotizacion_${quoteId}.pdf`,
+        filters: [{ name: 'Adobe PDF', extensions: ['pdf'] }]
+      });
+
+      if (filePath) {
+        const fs = require('fs');
+        fs.writeFileSync(filePath, data);
+        console.log(`[IPC] PDF guardado en: ${filePath}`);
+        return { success: true, path: filePath };
+      }
+      console.log(`[IPC] Descarga cancelada por el usuario.`);
+      return { success: false, message: 'Cancelado por el usuario' };
+    } catch (e) {
+      console.error("[IPC] Error en descarga PDF:", e);
+      return { success: false, message: e.message };
     }
   });
 
@@ -1365,25 +1489,58 @@ function setupIPC() {
 
       if (isMailLinkActive && mailLinkEmail) {
         const apiKey = db.select().from(config).where(eq(config.key, "mail_engine_api_key")).get()?.value;
-        const response = await fetch("http://mail-api.rosariogroupllc.com/api/send", {
+        
+        // 1. Generar el PDF en memoria (Buffer)
+        const { BrowserWindow } = require("electron");
+        let win = new BrowserWindow({ show: false });
+        await win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
+        
+        const pdfBuffer = await win.webContents.printToPDF({
+          printBackground: true,
+          marginsType: 1
+        });
+        
+        // 2. Convertir Buffer a Base64
+        const pdfBase64 = pdfBuffer.toString('base64');
+        
+        // 3. Cerrar ventana temporal
+        win.close();
+
+        // 4. Enviar con el nuevo formato de adjuntos 📎 (HTTPS)
+        const response = await fetch("https://mail-api.rosariogroupllc.com/api/send", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            accountId: mailLinkEmail,
+            email: mailLinkEmail, // Cambiado de accountId a email
             apiKey: apiKey,
-            to: email,
+            recipient: email,
             subject: `Cotización #${quote.id} - ${company.name}`,
-            text: `Hola, adjuntamos la cotización solicitada. Total: $${quote.total}`,
-            html: html
+            bodyHtml: html,
+            attachments: [
+              {
+                name: `Cotización_${quote.id}.pdf`,
+                content: pdfBase64,
+                contentType: "application/pdf"
+              }
+            ]
           })
         });
-        const resData = await response.json();
-        return { success: response.ok, message: resData.message || resData.error };
+
+        // Verificar si la respuesta es JSON antes de parsear
+        const contentType = response.headers.get("content-type");
+        if (contentType && contentType.indexOf("application/json") !== -1) {
+          const resData = await response.json();
+          return { success: response.ok, message: resData.message || resData.error };
+        } else {
+          const textError = await response.text();
+          console.error("[MailAPI] Error no-JSON:", textError);
+          throw new Error(`El servidor de correo respondió con un error (Código: ${response.status})`);
+        }
       } else {
         throw new Error("El sistema de correo no está configurado.");
       }
     } catch (e) {
-      console.error(e);
+      console.error("[IPC] Error enviando email:", e);
       return { success: false, message: e.message };
     }
   });
@@ -1399,71 +1556,103 @@ async function getQuotePrintData(quoteId) {
     rnc: companyData.find(c => c.key === 'company_rnc')?.value || '',
     address: companyData.find(c => c.key === 'company_address')?.value || '',
     phone: companyData.find(c => c.key === 'company_phone')?.value || '',
+    logo: companyData.find(c => c.key === 'company_logo')?.value || null,
+    color: companyData.find(c => c.key === 'invoice_color')?.value || '#1e3a8a',
   };
 
   return { quote, items, company };
 }
 
 function generateDocumentHTML(title, doc, items, company) {
+  // Formatear la fecha correctamente
+  const dateStr = doc.createdAt ? new Date(doc.createdAt).toLocaleDateString('es-DO', {
+    year: 'numeric', month: 'long', day: 'numeric'
+  }) : 'Recién creada';
+
+  const accentColor = company.color || '#1e3a8a';
+
   return `
     <html>
       <head>
         <style>
           body { font-family: sans-serif; padding: 40px; color: #333; }
-          .header { display: flex; justify-content: space-between; border-bottom: 2px solid #333; padding-bottom: 20px; margin-bottom: 30px; }
-          .company-info h1 { margin: 0; color: #1e3a8a; }
+          .header { display: flex; justify-content: space-between; border-bottom: 2px solid ${accentColor}; padding-bottom: 20px; margin-bottom: 30px; }
+          .company-info h1 { margin: 0; color: ${accentColor}; }
+          .company-info p { margin: 5px 0; font-size: 14px; line-height: 1.4; }
+          .logo { max-width: 150px; max-height: 80px; margin-bottom: 10px; }
           .doc-info { text-align: right; }
           .doc-info h2 { margin: 0; color: #666; }
+          .client-section { margin-top: 20px; padding: 15px; background: #f9fafb; border-radius: 10px; border-left: 5px solid ${accentColor}; }
+          .client-section h3 { margin: 0 0 5px 0; font-size: 12px; color: #666; text-transform: uppercase; }
+          .client-data { font-size: 16px; font-weight: bold; color: #111; }
           table { width: 100%; border-collapse: collapse; margin-top: 30px; }
-          th { background: #f3f4f6; text-align: left; padding: 12px; border-bottom: 1px solid #ddd; }
-          td { padding: 12px; border-bottom: 1px solid #eee; }
-          .totals { margin-top: 30px; text-align: right; }
-          .totals div { font-size: 18px; margin-bottom: 5px; }
-          .footer { margin-top: 50px; font-size: 12px; color: #999; text-align: center; }
+          th { background: #f3f4f6; text-align: left; padding: 12px; border-bottom: 1px solid #ddd; font-size: 12px; color: #666; text-transform: uppercase; }
+          td { padding: 12px; border-bottom: 1px solid #eee; font-size: 14px; }
+          .totals { margin-top: 30px; text-align: right; border-top: 2px solid #eee; pt: 20px; }
+          .totals div { font-size: 16px; margin-bottom: 8px; }
+          .grand-total { font-size: 24px !important; font-weight: 900; color: ${accentColor}; border-top: 1px solid #eee; padding-top: 10px; margin-top: 10px; }
+          .footer { margin-top: 50px; font-size: 11px; color: #999; text-align: center; border-top: 1px solid #eee; padding-top: 20px; }
         </style>
       </head>
       <body>
         <div class="header">
           <div class="company-info">
+            ${company.logo ? `<img src="${company.logo}" class="logo" />` : ''}
             <h1>${company.name}</h1>
-            <p>RNC: ${company.rnc}<br>${company.address}<br>Tel: ${company.phone}</p>
+            <p><strong>RNC:</strong> ${company.rnc}</p>
+            <p>${company.address}</p>
+            <p><strong>Tel:</strong> ${company.phone}</p>
           </div>
           <div class="doc-info">
             <h2>${title}</h2>
-            <p>#${doc.id}<br>Fecha: ${new Date(doc.date).toLocaleDateString()}</p>
-            <p><strong>Cliente:</strong> ${doc.clientName}</p>
+            <div style="font-size: 28px; font-weight: bold; color: ${accentColor};">#${doc.id}</div>
+            <div style="color: #666; font-size: 14px;">Fecha: ${dateStr}</div>
+            ${doc.ncf ? `<div style="margin-top: 10px; font-weight: bold; font-family: monospace; font-size: 18px; color: #444;">NCF: ${doc.ncf}</div>` : ''}
+            <div style="margin-top: 5px; font-size: 12px; font-weight: bold; color: ${doc.status === 'PAID' ? '#16a34a' : '#dc2626'}">
+                ${doc.status === 'PAID' ? 'PAGADA' : (doc.status === 'QUOTE' ? 'COTIZACIÓN' : 'PENDIENTE DE PAGO')}
+            </div>
           </div>
+        </div>
+
+        <div class="client-section">
+            <h3>Cliente</h3>
+            <div class="client-data">${doc.clientName}</div>
+            <div style="font-size: 14px; color: #444; margin-top: 5px;">
+                ${doc.clientRnc ? `<span><strong>RNC/Cédula:</strong> ${doc.clientRnc}</span>` : ''}
+                ${doc.clientPhone ? `<span style="margin-left: 20px;"><strong>Teléfono:</strong> ${doc.clientPhone}</span>` : ''}
+                ${doc.clientEmail ? `<div style="margin-top: 3px;"><strong>Email:</strong> ${doc.clientEmail}</div>` : ''}
+            </div>
         </div>
 
         <table>
           <thead>
             <tr>
               <th>Producto</th>
-              <th>Cant.</th>
-              <th>Precio</th>
-              <th>Total</th>
+              <th style="text-align: center;">Cant.</th>
+              <th style="text-align: right;">Precio</th>
+              <th style="text-align: right;">Total</th>
             </tr>
           </thead>
           <tbody>
             ${items.map(item => `
               <tr>
-                <td>${item.productName}</td>
-                <td>${item.quantity}</td>
-                <td>$${item.price.toLocaleString()}</td>
-                <td>$${(item.quantity * item.price).toLocaleString()}</td>
+                <td>${item.productName || 'Producto'}</td>
+                <td style="text-align: center;">${item.quantity}</td>
+                <td style="text-align: right;">$${item.price.toLocaleString()}</td>
+                <td style="text-align: right;">$${(item.quantity * item.price).toLocaleString()}</td>
               </tr>
             `).join('')}
           </tbody>
         </table>
 
         <div class="totals">
-          <div>Subtotal: $${doc.subtotal.toLocaleString()}</div>
-          <div>ITBIS (18%): $${doc.itbis.toLocaleString()}</div>
-          <div style="font-weight: bold; font-size: 24px; color: #1e3a8a;">TOTAL: $${doc.total.toLocaleString()}</div>
+          <div>Subtotal: $${(doc.subtotal || 0).toLocaleString()}</div>
+          <div>ITBIS (18%): $${(doc.tax || 0).toLocaleString()}</div>
+          <div class="grand-total">TOTAL: $${(doc.total || 0).toLocaleString()}</div>
         </div>
 
         <div class="footer">
-          Esta es una cotización informativa válida por 15 días.
+          <p>Gracias por preferir Multiservi Chavon. Esta cotización tiene una validez de 15 días.</p>
         </div>
       </body>
     </html>

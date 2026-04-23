@@ -95,6 +95,15 @@ contextBridge.exposeInMainWorld("electronAPI", {
       "mail:request-link",
       "mail:get-link-status",
       "app:open-external",
+      "db:print-quote",
+      "db:email-quote",
+      "db:download-quote-pdf",
+      "db:delete-invoice",
+      "db:get-invoice-items",
+      "db:get-config",
+      "db:save-config",
+      "db:upload-logo",
+      "cloud:push-all"
     ];
     if (validChannels.includes(channel)) {
       return ipcRenderer.invoke(channel, ...args);
@@ -105,6 +114,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
       "update-available",
       "update-downloaded",
       "download-progress",
+      "cloud:sync-refresh"
     ];
     if (validChannels.includes(channel)) {
       // Deliberately strip event as it includes `sender`

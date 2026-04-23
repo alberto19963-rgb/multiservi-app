@@ -49,6 +49,7 @@ function initDB() {
       type TEXT DEFAULT 'FINAL',
       address TEXT,
       phone TEXT,
+      email TEXT,
       notes TEXT
     );
     CREATE TABLE IF NOT EXISTS ncf_sequences (
@@ -64,6 +65,8 @@ function initDB() {
       client_id INTEGER REFERENCES clients(id),
       client_name TEXT,
       client_rnc TEXT,
+      client_email TEXT,
+      client_phone TEXT,
       ncf_type TEXT,
       ncf TEXT UNIQUE,
       subtotal REAL DEFAULT 0,
@@ -273,6 +276,9 @@ function initDB() {
     "ADD COLUMN updated_at TEXT",
     "ADD COLUMN deleted INTEGER DEFAULT 0",
     "ADD COLUMN product_name TEXT",
+    "ADD COLUMN email TEXT",
+    "ADD COLUMN client_email TEXT",
+    "ADD COLUMN client_phone TEXT",
   ];
 
   try {

@@ -86,21 +86,16 @@ app.whenReady().then(() => {
   createWindow();
 
   // --- AUTOMATIC RESTORATION (SaaS) ---
-  // We wait 2 seconds after boot to ensure network is stable before pulling
+  // Esperamos 2 segundos para asegurar estabilidad de red antes de jalar todo
   setTimeout(async () => {
-    console.log("[SaaS] Verificando restauración automática de datos...");
+    console.log("[SaaS] Iniciando sincronización masiva Dual...");
     try {
-      // Pull both hierarchical and legacy inventory
-      await pullProductsFromCloud();
-      await pullInventoryFromCloud();
+      const { fullSyncFromCloud } = require("./cloud-sync");
+      await fullSyncFromCloud();
       
-      // Notify Frontend if any window is open to refresh UI
-      BrowserWindow.getAllWindows().forEach(win => {
-        win.webContents.send("cloud:sync-refresh", "all");
-      });
-      console.log("[SaaS] Restauración al arranque completada.");
+      console.log("[SaaS] Sincronización inicial exitosa.");
     } catch (e) {
-      console.error("[SaaS] Error en restauración al arranque:", e.message);
+      console.error("[SaaS] Error en sincronización inicial:", e);
     }
   }, 2000);
 
