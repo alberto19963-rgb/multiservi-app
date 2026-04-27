@@ -32,7 +32,7 @@ export default function SetupPage({ onSetupComplete }) {
         .from('companies')
         .select('*')
         .eq('company_code', trimmedCode)
-        .single();
+        .maybeSingle();
 
       if (sbError) {
         throw new Error(`Error de red/nube: ${sbError.message} (${sbError.code})`);
@@ -52,7 +52,7 @@ export default function SetupPage({ onSetupComplete }) {
         .from('subscription_plans')
         .select('plan_type')
         .eq('id', company.plan_id)
-        .single();
+        .maybeSingle();
       
       const isTrial = company.plan_type === 'TRIAL' || (plan && plan.plan_type === 'TRIAL');
 
@@ -61,7 +61,7 @@ export default function SetupPage({ onSetupComplete }) {
           .from('trial_history')
           .select('*')
           .eq('hardware_id', machineId)
-          .single();
+          .maybeSingle();
         
         if (trialUsed) {
           throw new Error("⚠️ Esta computadora ya utilizó su periodo de prueba gratuito. Por favor, adquiera un plan premium para continuar activando este equipo.");

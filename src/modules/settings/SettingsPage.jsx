@@ -79,7 +79,7 @@ export default function SettingsPage({ hasProAccess }) {
             // Fetch License Info from Cloud
             const savedCode = await db.getSetting('company_code');
             if (savedCode) {
-               const { data: comp } = await supabase.from('companies').select('*').eq('company_code', savedCode).single();
+               const { data: comp } = await supabase.from('companies').select('*').eq('company_code', savedCode).maybeSingle();
                if (comp) {
                    const dUid = await db.getSetting("device_uid");
                    const pName = await db.getSetting("pc_name");
@@ -91,7 +91,7 @@ export default function SettingsPage({ hasProAccess }) {
                            .select('*')
                            .eq('company_id', comp.id)
                            .eq('device_uid', dUid)
-                           .single();
+                           .maybeSingle();
                        myDevice = dev;
                    }
 
@@ -283,43 +283,42 @@ export default function SettingsPage({ hasProAccess }) {
 
 
 
-                  {hasProAccess && (
-                    <div className="pt-4 border-t border-gray-200 mt-4">
-                        <h3 className="text-sm font-bold text-gray-800 mb-3 flex items-center gap-2">
-                          <span>📋</span> Módulo de Reclutamiento
-                        </h3>
-                        <div className="space-y-3">
-                          <div>
-                              <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Link del Formulario (Para enviar)</label>
-                              <input 
-                                  className="w-full border border-gray-300 rounded-lg p-2 outline-none focus:border-blue-500 text-sm"
-                                  placeholder="https://docs.google.com/forms/..."
-                                  value={companySettings.recruitmentFormUrl || ''}
-                                  onChange={e => setCompanySettings({...companySettings, recruitmentFormUrl: e.target.value})}
-                              />
-                          </div>
-                          <div>
-                              <label className="block text-xs font-bold text-gray-500 uppercase mb-1 text-purple-600">Link de Edición (Dueño)</label>
-                              <input 
-                                  className="w-full border border-purple-200 bg-purple-50/30 rounded-lg p-2 outline-none focus:border-purple-500 text-sm"
-                                  placeholder="https://docs.google.com/forms/d/.../edit"
-                                  value={companySettings.recruitmentEditUrl || ''}
-                                  onChange={e => setCompanySettings({...companySettings, recruitmentEditUrl: e.target.value})}
-                              />
-                          </div>
-                          <div>
-                              <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Link de Respuestas (Google Sheets / Excel)</label>
-                              <input 
-                                  className="w-full border border-gray-300 rounded-lg p-2 outline-none focus:border-blue-500 text-sm"
-                                  placeholder="https://docs.google.com/spreadsheets/..."
-                                  value={companySettings.recruitmentSheetUrl || ''}
-                                  onChange={e => setCompanySettings({...companySettings, recruitmentSheetUrl: e.target.value})}
-                              />
-                              <p className="text-[10px] text-gray-400 mt-1">Crea una hoja de cálculo desde la pestaña "Respuestas" de tu formulario.</p>
-                          </div>
+                  {/* Módulo de Reclutamiento - Siempre Visible */}
+                  <div className="pt-4 border-t border-gray-200 mt-4">
+                      <h3 className="text-sm font-bold text-gray-800 mb-3 flex items-center gap-2">
+                        <span>📋</span> Módulo de Reclutamiento
+                      </h3>
+                      <div className="space-y-3">
+                        <div>
+                            <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Link del Formulario (Para enviar)</label>
+                            <input 
+                                className="w-full border border-gray-300 rounded-lg p-2 outline-none focus:border-blue-500 text-sm"
+                                placeholder="https://docs.google.com/forms/..."
+                                value={companySettings.recruitmentFormUrl || ''}
+                                onChange={e => setCompanySettings({...companySettings, recruitmentFormUrl: e.target.value})}
+                            />
                         </div>
-                    </div>
-                  )}
+                        <div>
+                            <label className="block text-xs font-bold text-gray-500 uppercase mb-1 text-purple-600">Link de Edición (Dueño)</label>
+                            <input 
+                                className="w-full border border-purple-200 bg-purple-50/30 rounded-lg p-2 outline-none focus:border-purple-500 text-sm"
+                                placeholder="https://docs.google.com/forms/d/.../edit"
+                                value={companySettings.recruitmentEditUrl || ''}
+                                onChange={e => setCompanySettings({...companySettings, recruitmentEditUrl: e.target.value})}
+                            />
+                        </div>
+                        <div>
+                            <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Link de Respuestas (Google Sheets / Excel)</label>
+                            <input 
+                                className="w-full border border-gray-300 rounded-lg p-2 outline-none focus:border-blue-500 text-sm"
+                                placeholder="https://docs.google.com/spreadsheets/..."
+                                value={companySettings.recruitmentSheetUrl || ''}
+                                onChange={e => setCompanySettings({...companySettings, recruitmentSheetUrl: e.target.value})}
+                            />
+                            <p className="text-[10px] text-gray-400 mt-1">Crea una hoja de cálculo desde la pestaña "Respuestas" de tu formulario.</p>
+                        </div>
+                      </div>
+                  </div>
                   
                   <button 
                     type="submit"

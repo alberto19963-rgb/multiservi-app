@@ -63,14 +63,28 @@ export default function TemplateEditor() {
                     <h1 className="text-3xl font-black text-gray-900 italic tracking-tighter">Branding & Documentos</h1>
                     <p className="text-gray-500 font-medium">Personaliza la identidad visual de tus facturas y tickets</p>
                 </div>
-                <button 
-                    onClick={handleSave}
-                    disabled={isSaving}
-                    className="bg-indigo-600 text-white px-8 py-4 rounded-2xl font-black flex items-center hover:bg-indigo-700 transition-all shadow-xl shadow-indigo-200 active:scale-95 disabled:opacity-50"
-                >
-                    {isSaving ? <RefreshCcw className="animate-spin mr-2" /> : <Save className="mr-2" />}
-                    Guardar Identidad
-                </button>
+                <div className="flex gap-4">
+                    <button 
+                        onClick={async () => {
+                            if(window.confirm("¿Seguro que quieres subir todos los datos locales a la Nube? Esto sobrescribirá lo que esté en Supabase.")) {
+                                const res = await db.pushAllToCloud();
+                                alert(res.success ? `Sincronización masiva exitosa: ${res.count} registros subidos.` : `Error: ${res.msg}`);
+                            }
+                        }}
+                        className="bg-emerald-600 text-white px-8 py-4 rounded-2xl font-black flex items-center hover:bg-emerald-700 transition-all shadow-xl shadow-emerald-200 active:scale-95"
+                    >
+                        <RefreshCcw className="mr-2" />
+                        Sincronizar todo a la Nube
+                    </button>
+                    <button 
+                        onClick={handleSave}
+                        disabled={isSaving}
+                        className="bg-indigo-600 text-white px-8 py-4 rounded-2xl font-black flex items-center hover:bg-indigo-700 transition-all shadow-xl shadow-indigo-200 active:scale-95 disabled:opacity-50"
+                    >
+                        {isSaving ? <RefreshCcw className="animate-spin mr-2" /> : <Save className="mr-2" />}
+                        Guardar Identidad
+                    </button>
+                </div>
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-10">

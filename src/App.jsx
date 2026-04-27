@@ -47,7 +47,7 @@ function App() {
               .from('companies')
               .select('max_devices, status')
               .eq('company_code', code.trim())
-              .single();
+              .maybeSingle();
             
             if (comp) {
               const isPro = comp.max_devices >= 3 || comp.status === 'DEMO';

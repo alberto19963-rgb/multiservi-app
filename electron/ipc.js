@@ -17,8 +17,9 @@ const {
   shifts,
   invoicePayments,
   dgiiRncs,
+  quotations
 } = require("./db/schema");
-const { eq, sql, desc, like, or } = require("drizzle-orm");
+const { eq, sql, desc, like, or, and } = require("drizzle-orm");
 const { v4: uuidv4 } = require("uuid");
 const { getNextNCF, incrementNCF } = require("./ncf");
 const { 
@@ -27,21 +28,75 @@ const {
   pushAllDataToCloud,
   pushProductToCloud, 
   pushInvoiceToCloud,
+  pushQuotationToCloud,
   pushConfigToCloud,
-  pushNCFSequenceToCloud
+  pushNCFSequenceToCloud,
+  pushClientToCloud,
+  pushExpenseToCloud,
+  pushEmployeeToCloud,
+  pushShiftToCloud,
+  pushPaymentToCloud,
+  pushTimeLogToCloud,
+  pushFamilyToCloud,
+  pushVariantToCloud,
+  pushSkuToCloud,
+  pushInvoiceItemToCloud
 } = require("./cloud-sync");
 const { syncDGII } = require("./dgii-sync");
 
 const db = getDB();
-const NODE_ID = "NODE-" + Math.floor(Math.random() * 1000); // TODO: Load from Config
+let NODE_ID = "NODE-TEMP";
+
+function initNodeId() {
+  try {
+    const existing = db.select().from(config).where(eq(config.key, "machine_id")).get();
+    if (existing) {
+      NODE_ID = existing.value;
+    } else {
+      NODE_ID = "NODE-" + Math.floor(Math.random() * 10000);
+      db.insert(config).values({ key: "machine_id", value: NODE_ID }).run();
+    }
+    console.log("[System] Terminal ID:", NODE_ID);
+  } catch (e) {
+    console.error("[System] Error initializing NODE_ID:", e);
+  }
+}
 
 // Helper to add metadata
-const withMeta = (data) => ({
-  ...data,
-  uuid: uuidv4(),
-  nodeId: NODE_ID,
-  updatedAt: sql`(CURRENT_TIMESTAMP)`,
-});
+const withMeta = (data) => {
+  // Si ya tiene UUID (por ejemplo, viene de la nube), lo mantenemos
+  if (data.uuid) return {
+    ...data,
+    nodeId: NODE_ID,
+    updatedAt: sql`(CURRENT_TIMESTAMP)`,
+  };
+
+  return {
+    ...data,
+    uuid: uuidv4(),
+    nodeId: NODE_ID,
+    updatedAt: sql`(CURRENT_TIMESTAMP)`,
+  };
+};
+
+// --- SEGURIDAD: SEED UUIDS PARA EVITAR DUPLICADOS ---
+function seedMissingUUIDs() {
+  const db = getDB();
+  const tables = [products, clients, expenses, invoices, productFamilies, productVariants, productSkus];
+  
+  console.log("[Sync] Verificando integridad de Identidades Únicas...");
+  
+  tables.forEach(table => {
+    const records = db.select().from(table).all();
+    records.forEach(record => {
+      if (!record.uuid) {
+        const newUuid = uuidv4();
+        db.update(table).set({ uuid: newUuid }).where(eq(table.id, record.id)).run();
+        console.log(`[Sync] Asignado UUID permanente a registro ${record.id} en ${table.name}`);
+      }
+    });
+  });
+}
 
 function setupIPC() {
   // --- CLOUD SYNC ---
@@ -145,7 +200,7 @@ function setupIPC() {
         .get();
       
       console.log("[IPC] update result:", updatedProduct);
-      pushUpdateToCloud(updatedProduct);
+      pushProductToCloud(updatedProduct); // Corregido: nombre de función correcto
       return updatedProduct;
     } catch (e) {
       console.error("[IPC] Error updating product:", e);
@@ -154,11 +209,11 @@ function setupIPC() {
   });
 
   ipcMain.handle("db:sync-all-cloud", async () => {
-    return await pushAllProductsToCloud();
+    return await fullSyncFromCloud();
   });
 
-  ipcMain.handle("db:pull-cloud", async () => {
-    return await pullProductsFromCloud();
+  ipcMain.handle("db:push-all-cloud", async () => {
+    return await pushAllDataToCloud();
   });
 
   // --- CLIENTS ---
@@ -167,7 +222,10 @@ function setupIPC() {
   });
 
   ipcMain.handle("db:add-client", async (event, clientData) => {
-    return db.insert(clients).values(withMeta(clientData)).returning().get();
+    const localClient = db.insert(clients).values(withMeta(clientData)).returning().get();
+    const { pushClientToCloud } = require("./cloud-sync");
+    pushClientToCloud(localClient);
+    return localClient;
   });
 
   ipcMain.handle("db:delete-invoice", async (event, id) => {
@@ -197,6 +255,7 @@ function setupIPC() {
         } else {
           db.insert(config).values(item).run();
         }
+        pushConfigToCloud(item.key, item.value);
       }
       return { success: true };
     } catch (e) {
@@ -214,6 +273,7 @@ function setupIPC() {
       } else {
         db.insert(config).values({ key: 'company_logo', value: base64Data }).run();
       }
+      pushConfigToCloud('company_logo', base64Data);
       return { success: true };
     } catch (e) {
       return { success: false, message: e.message };
@@ -229,20 +289,23 @@ function setupIPC() {
         .from(ncfSequences)
         .where(eq(ncfSequences.type, type))
         .get();
+      let result;
       if (existing) {
-        return db
+        result = db
           .update(ncfSequences)
           .set({ current, limit, expiry, updatedAt: sql`(CURRENT_TIMESTAMP)` })
           .where(eq(ncfSequences.type, type))
           .returning()
           .get();
       } else {
-        return db
+        result = db
           .insert(ncfSequences)
           .values(withMeta({ type, current, limit, expiry }))
           .returning()
           .get();
       }
+      pushNCFSequenceToCloud(result);
+      return result;
     }
   );
 
@@ -364,6 +427,14 @@ function setupIPC() {
         const finalInvoice = result;
         if (!isQuote) {
             pushInvoiceToCloud(finalInvoice);
+            // Push items and payments too
+            items.forEach(item => pushInvoiceItemToCloud({ ...item, invoiceUuid: finalInvoice.uuid }));
+            if (payment) {
+              const sh = db.select().from(shifts).where(eq(shifts.id, shiftId)).get();
+              pushPaymentToCloud({ invoiceUuid: finalInvoice.uuid, shiftUuid: sh?.uuid, method: payment.method, amount: total, uuid: uuidv4() });
+            }
+        } else {
+            pushQuotationToCloud(finalInvoice);
         }
         return finalInvoice;
       } catch (e) {
@@ -465,7 +536,17 @@ function setupIPC() {
           }
         }
 
-        return { success: true, ncf };
+        const res = { success: true, ncf };
+        // Sync updated invoice and new payment
+        const updatedInv = db.select().from(invoices).where(eq(invoices.id, quoteId)).get();
+        if (updatedInv) {
+          pushInvoiceToCloud(updatedInv);
+          if (payment) {
+            const sh = db.select().from(shifts).where(eq(shifts.id, shiftId)).get();
+            pushPaymentToCloud({ invoiceUuid: updatedInv.uuid, shiftUuid: sh?.uuid, method: payment.method, amount: quote.total, uuid: uuidv4() });
+          }
+        }
+        return res;
       });
       return result;
     } catch (e) {
@@ -505,6 +586,7 @@ function setupIPC() {
       
       const result = db.insert(shifts).values(shiftData).returning().get();
       console.log("[Shift] Turno abierto exitosamente:", result.id);
+      pushShiftToCloud(result);
       return result;
     } catch(e) { 
       console.error("[Shift] FATAL ERROR al abrir turno:", e);
@@ -527,6 +609,8 @@ function setupIPC() {
                .where(eq(shifts.id, shiftId))
                .returning()
                .get();
+      if (updatedShift) pushShiftToCloud(updatedShift);
+      return updatedShift;
     } catch(e) { 
       console.error("[Shift] Error al cerrar turno:", e);
       throw e; 
@@ -564,7 +648,10 @@ function setupIPC() {
 
   // --- FINANCE ---
   ipcMain.handle("db:add-expense", async (event, data) => {
-    return db.insert(expenses).values(withMeta(data)).returning().get();
+    const { pushExpenseToCloud } = require("./cloud-sync");
+    const localExpense = db.insert(expenses).values(withMeta(data)).returning().get();
+    pushExpenseToCloud(localExpense);
+    return localExpense;
   });
 
   // Removed startDate/endDate unused args
@@ -649,7 +736,9 @@ function setupIPC() {
   });
 
   ipcMain.handle("db:add-employee", async (event, data) => {
-    return db.insert(employees).values(withMeta(data)).returning().get();
+    const result = db.insert(employees).values(withMeta(data)).returning().get();
+    pushEmployeeToCloud(result);
+    return result;
   });
 
   ipcMain.handle("db:clock-action", async (event, { identifier, type }) => {
@@ -685,7 +774,10 @@ function setupIPC() {
           type: type,
         })
       )
-      .run();
+      .returning()
+      .get();
+    
+    pushTimeLogToCloud(log);
 
     return { success: true, employee: emp.name };
   });
@@ -847,6 +939,7 @@ function setupIPC() {
           JSON.stringify(candidate, null, 2)
         );
 
+        pushEmployeeToCloud(newEmp);
         return { success: true, path: empFolder, employee: newEmp };
       } catch (e) {
         console.error("Hiring Error:", e);
@@ -1123,14 +1216,10 @@ function setupIPC() {
 
   ipcMain.handle("db:add-family", async (event, { name, icon }) => {
     try {
-      const sqlite = getSQLite();
-      const result = sqlite.prepare(
-        "INSERT INTO product_families (name, icon) VALUES (?, ?)"
-      ).run(name, icon || "📦");
-      const newFamily = { id: result.lastInsertRowid, name, icon: icon || "📦" };
-      // Sync to Supabase in background
+      const { pushFamilyToCloud } = require("./cloud-sync");
+      const newFamily = db.insert(productFamilies).values(withMeta({ name, icon: icon || "📦" })).returning().get();
       pushFamilyToCloud(newFamily);
-      return { success: true, id: result.lastInsertRowid };
+      return { success: true, id: newFamily.id };
     } catch (e) {
       console.error("[IPC] add-family error:", e);
       throw e;
@@ -1182,14 +1271,10 @@ function setupIPC() {
 
   ipcMain.handle("db:add-variant", async (event, { familyId, name, brand, description }) => {
     try {
-      const sqlite = getSQLite();
-      const result = sqlite.prepare(
-        "INSERT INTO product_variants (family_id, name, brand, description) VALUES (?, ?, ?, ?)"
-      ).run(familyId, name, brand || "", description || "");
-      // Get family name for sync
-      const family = sqlite.prepare("SELECT name FROM product_families WHERE id=?").get(familyId);
-      pushVariantToCloud({ id: result.lastInsertRowid, name, brand, description }, family?.name || "");
-      return { success: true, id: result.lastInsertRowid };
+      const { pushVariantToCloud } = require("./cloud-sync");
+      const newVariant = db.insert(productVariants).values(withMeta({ familyId, name, brand: brand || "", description: description || "" })).returning().get();
+      pushVariantToCloud(newVariant);
+      return { success: true, id: newVariant.id };
     } catch (e) {
       console.error("[IPC] add-variant error:", e);
       throw e;
@@ -1242,21 +1327,22 @@ function setupIPC() {
 
   ipcMain.handle("db:add-sku", async (event, { variantId, variantName, familyName, name, barcode, price, cost, stock, minStock, unit, qtyPerPack }) => {
     try {
-      const sqlite = getSQLite();
+      const { pushSkuToCloud } = require("./cloud-sync");
+      
+      const newSku = db.insert(productSkus).values(withMeta({ 
+        variantId, 
+        name, 
+        barcode: barcode || null, 
+        price: price || 0, 
+        cost: cost || 0, 
+        stock: stock || 0, 
+        minStock: minStock || 5, 
+        unit: unit || "UNI", 
+        qtyPerPack: qtyPerPack || 1 
+      })).returning().get();
 
-      // 1. Insert into product_skus
-      const result = sqlite.prepare(`
-        INSERT INTO product_skus (variant_id, name, barcode, price, cost, stock, min_stock, unit, qty_per_pack)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(variantId, name, barcode || null, price || 0, cost || 0, stock || 0, minStock || 5, unit || "UNI", qtyPerPack || 1);
-
-      const skuId = result.lastInsertRowid;
-
-      // Sync to Supabase in background
-      pushSkuToCloud(
-        { id: skuId, name, barcode, price, cost, stock, min_stock: minStock, unit, qty_per_pack: qtyPerPack },
-        variantName, familyName
-      );
+      // Sync to Supabase
+      pushSkuToCloud(newSku, variantName, familyName);
 
       // 2. Sync to legacy 'products' table so POS keeps working
       // Name format: "Familia - Variante - Presentación" (e.g. "Agua - Agua Cristal - Fardo x24")
@@ -1657,6 +1743,9 @@ function generateDocumentHTML(title, doc, items, company) {
       </body>
     </html>
   `;
+  // --- FINAL SETUP ---
+  initNodeId(); // Cargar identidad de esta PC
+  seedMissingUUIDs(); // Asegurar que todo tenga UUID antes de sincronizar
 }
 
 module.exports = { setupIPC };
